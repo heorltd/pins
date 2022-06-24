@@ -14,6 +14,7 @@
 #'    the current R session ends. It's useful for examples and tests.
 #'
 #' @inheritParams new_board
+#' @inheritParams board_url
 #' @param path Path to directory to store pins. Will be created if it
 #'   doesn't already exist.
 #' @family boards
@@ -21,12 +22,14 @@
 #' # session-specific local board
 #' board <- board_temp()
 #' @export
-board_folder <- function(path, versioned = FALSE) {
+board_folder <- function(path, cache = NULL, versioned = FALSE) {
   fs::dir_create(path)
   path <- fs::path_norm(path)
 
+  cache <- cache %||% board_cache_path(paste0("rsc-", hash(url)))
+
   new_board_v1("pins_board_folder",
-    cache = NA_character_,
+    cache = cache,
     path = path,
     versioned = versioned
   )
@@ -86,7 +89,15 @@ pin_store.pins_board_folder <- function(board, name, paths, metadata,
 
 #' @export
 pin_fetch.pins_board_folder <- function(board, name, version = NULL, ...) {
-  pin_meta(board, name, version = version)
+  meta <- pin_meta(board, name, version = version)
+  cache_touch(board, meta)
+
+  for (file in meta$file){
+    key <- fs::path(name, meta$local$version, file)
+    folder_download(board, key)
+  }
+
+  meta
 }
 
 #' @export
@@ -100,8 +111,9 @@ pin_meta.pins_board_folder <- function(board, name, version = NULL, ...) {
     abort_pin_version_missing(version)
   }
 
-  meta <- read_meta(path_version)
-  local_meta(meta, name = name, dir = path_version, version = version)
+  path_cache <- fs::path(board$cache, name, version)
+  meta <- read_meta(fs::path(board$cache, name, version))
+  local_meta(meta, name = name, dir = path_cache, version = version)
 }
 
 #' @export
@@ -123,4 +135,15 @@ pin_version_delete.pins_board_folder <- function(board, name, version, ...) {
 board_deparse.pins_board_folder <- function(board, ...) {
   path <- check_board_deparse(board, "path")
   expr(board_folder(path = !!as.character(path)))
+}
+
+# download a specific file from the board, as given by the 'key' path
+folder_download <- function(board, key){
+  path <- fs::path(board$cache, key)
+
+  if (!fs::file_exists(path)){
+    fs::file_copy(key, path)
+  }
+
+  path
 }
